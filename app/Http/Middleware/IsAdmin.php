@@ -8,13 +8,12 @@ use Symfony\Component\HttpFoundation\Response;
 
 class IsAdmin
 {
-    public function handle(Request $request, Closure $next): Response
-    {
-        // Jika belum login atau bukan admin, tendang ke dashboard biasa/login
-        if (!auth()->check() || auth()->user()->role !== 'admin') {
-            return redirect('/dashboard')->with('error', 'Anda tidak memiliki akses admin!');
-        }
-
+    public function handle(Request $request, Closure $next)
+{
+    if (auth()->check() && in_array(auth()->user()->role, ['admin', 'super_admin'])) {
         return $next($request);
     }
+
+    return redirect('/')->with('error', 'Anda tidak memiliki hak akses.');
+}
 }

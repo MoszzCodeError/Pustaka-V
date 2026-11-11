@@ -28,10 +28,10 @@
 
             <!-- Logo Brand Top Left -->
             <div class="flex items-center space-x-3 z-10">
-                <div class="w-8 h-8 bg-[#FF5500] rounded-lg flex items-center justify-center font-bold text-white shadow-md">
+                <a href="{{ route('home') }}" class="w-8 h-8 bg-[#FF5500] rounded-lg flex items-center justify-center font-bold text-white shadow-md hover:scale-105 transition">
                     P
-                </div>
-                <span class="text-white font-bold tracking-wide text-lg">Pustaka V</span>
+                </a>
+                <a href="{{ route('home') }}" class="text-white font-bold tracking-wide text-lg hover:text-orange-400 transition">Pustaka V</a>
             </div>
 
             <!-- Content Banner Center -->
@@ -54,6 +54,14 @@
         <div class="w-full md:w-1/2 bg-[#111726] p-8 md:p-12 flex flex-col justify-center">
             <div class="max-w-md w-full mx-auto">
                 
+                <!-- TOMBOL KEMBALI KE BERANDA -->
+                <div class="mb-6">
+                    <a href="{{ route('home') }}" class="inline-flex items-center gap-2 text-xs font-semibold text-gray-400 hover:text-[#FF5500] bg-[#182032] hover:bg-[#1E293B] border border-gray-700/60 px-3.5 py-2 rounded-xl transition shadow-sm">
+                        <span>←</span>
+                        <span>Kembali ke Beranda</span>
+                    </a>
+                </div>
+
                 <!-- Title Header -->
                 <h1 class="text-2xl md:text-3xl font-extrabold text-white tracking-wide">Access Portal</h1>
                 <p class="text-gray-400 text-xs mt-1 mb-8">Sign in with your registered student credentials</p>

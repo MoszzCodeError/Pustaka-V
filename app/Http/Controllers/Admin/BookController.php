@@ -1,72 +1,148 @@
 <?php
 
-namespace App\Http\Controllers\Admin;
+namespace App\Http\Controllers;
 
-use App\Http\Controllers\Controller;
-use App\Models\Book;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Carbon\Carbon;
 
 class BookController extends Controller
 {
-    // Dashboard Admin Overview
-    public function dashboard()
+    // ==========================================
+    // 1. KATALOG & DETAIL BUKU (PUBLIK)
+    // ==========================================
+
+    public function index(Request $request)
     {
-        $totalBuku = Book::count();
-        $bukuDipinjam = 0; // Dinamis nanti
-        $bukuTersedia = $totalBuku;
-        $siswaAktif = 0;
+        // Murni Ambil Genre dari Tabel `genres` Database
+        $genres = DB::table('genres')->get();
 
-        return view('admin.dashboard', compact('totalBuku', 'bukuDipinjam', 'bukuTersedia', 'siswaAktif'));
-    }
+        $query = DB::table('books')
+            ->leftJoin('racks', 'books.rack_id', '=', 'racks.id')
+            ->select('books.*', 'racks.nama_rak');
 
-    // Halaman Kelola Buku
-    public function index()
-    {
-        $books = Book::latest()->paginate(10);
-        return view('admin.books.index', compact('books'));
-    }
-
-    // Proses Simpan Buku Baru
-    public function store(Request $request)
-    {
-        $request->validate([
-            'judul'        => 'required|string|max:255',
-            'penulis'      => 'required|string|max:255',
-            'genre'        => 'required|string',
-            'isbn'         => 'nullable|string',
-            'stok'         => 'required|integer|min:0',
-            'lokasi_rak'   => 'required|string',
-            'cover_image'  => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
-            'deskripsi'    => 'nullable|string',
-        ]);
-
-        $coverPath = null;
-        if ($request->hasFile('cover_image')) {
-            $coverPath = $request->file('cover_image')->store('covers', 'public');
-            $coverPath = '/storage/' . $coverPath;
+        // Search berdasarkan judul atau penulis
+        if ($request->filled('search') || $request->filled('q')) {
+            $search = $request->search ?? $request->q;
+            $query->where(function ($q) use ($search) {
+                $q->where('books.judul', 'like', '%' . $search . '%')
+                  ->orWhere('books.penulis', 'like', '%' . $search . '%');
+            });
         }
 
-        Book::create([
-            'judul'       => $request->judul,
-            'penulis'     => $request->penulis,
-            'genre'       => $request->genre,
-            'isbn'        => $request->isbn,
-            'stok'        => $request->stok,
-            'lokasi_rak'  => $request->lokasi_rak,
-            'cover_image' => $coverPath,
-            'deskripsi'   => $request->deskripsi,
-        ]);
+        // Filter berdasarkan Genre
+        if ($request->filled('genre')) {
+            $query->where('books.genre', $request->genre);
+        }
 
-        return back()->with('success', 'Buku berhasil ditambahkan!');
+        $books = $query->orderBy('books.created_at', 'desc')->paginate(12);
+
+        return view('catalog', compact('books', 'genres'));
     }
 
-    // Hapus Buku
-    public function destroy($id)
+    public function show($id)
     {
-        $book = Book::findOrFail($id);
-        $book->delete();
+        $book = DB::table('books')
+            ->leftJoin('racks', 'books.rack_id', '=', 'racks.id')
+            ->select('books.*', 'racks.nama_rak')
+            ->where('books.id', $id)
+            ->first();
 
-        return back()->with('success', 'Buku berhasil dihapus!');
+        if (!$book) {
+            abort(404, 'Buku tidak ditemukan');
+        }
+
+        $genreBook = $book->genre ?? null;
+
+        $relatedBooks = DB::table('books')
+            ->where('id', '!=', $id)
+            ->when($genreBook, function ($query) use ($genreBook) {
+                return $query->where('genre', $genreBook);
+            })
+            ->take(4)
+            ->get();
+
+        if ($relatedBooks->count() < 4) {
+            $excludeIds = $relatedBooks->pluck('id')->push($id)->toArray();
+
+            $additional = DB::table('books')
+                ->whereNotIn('id', $excludeIds)
+                ->take(4 - $relatedBooks->count())
+                ->get();
+
+            $relatedBooks = $relatedBooks->merge($additional);
+        }
+
+        return view('books.show', compact('book', 'relatedBooks'));
+    }
+
+    // ==========================================
+    // 2. PEMINJAMAN & USER DASHBOARD
+    // ==========================================
+
+    public function borrow(Request $request, $id)
+    {
+        if (!auth()->check()) {
+            return redirect()->route('login')->with('error', 'Silakan login terlebih dahulu.');
+        }
+
+        $buku = DB::table('books')->where('id', $id)->first();
+        if (!$buku || $buku->stok < 1) {
+            return redirect()->back()->with('error', 'Stok buku sedang tidak tersedia.');
+        }
+
+        $durasi = (int) $request->input('durasi', 3);
+        $kodeTukar = strtoupper(Str::random(5));
+
+        DB::table('loans')->insert([
+            'kode_tukar'      => $kodeTukar,
+            'user_id'         => auth()->id(),
+            'book_id'         => $id,
+            'tanggal_pinjam'  => Carbon::now()->toDateString(),
+            'tanggal_kembali' => Carbon::now()->addDays($durasi)->toDateString(),
+            'durasi_hari'     => $durasi,
+            'status'          => 'menunggu_pengambilan',
+            'denda'           => 0,
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+
+        DB::table('books')->where('id', $id)->decrement('stok');
+
+        return redirect()->route('user.dashboard')->with('success', "Permintaan peminjaman berhasil! Kode Unik Anda: {$kodeTukar}");
+    }
+
+    public function dashboard()
+    {
+        $userId = auth()->id();
+
+        $loans = DB::table('loans')
+            ->join('books', 'loans.book_id', '=', 'books.id')
+            ->select('loans.*', 'books.judul', 'books.penulis', 'books.cover')
+            ->where('loans.user_id', $userId)
+            ->orderBy('loans.created_at', 'desc')
+            ->get();
+
+        $activeCount = $loans->whereIn('status', ['menunggu_pengambilan', 'aktif'])->count();
+
+        $dueSoonCount = $loans->where('status', 'aktif')
+            ->filter(function ($item) {
+                $daysRemaining = Carbon::now()->diffInDays(Carbon::parse($item->tanggal_kembali), false);
+                return $daysRemaining >= 0 && $daysRemaining <= 2;
+            })->count();
+
+        $totalFinesSum = $loans->sum('denda');
+        $booksReadCount = $loans->where('status', 'dikembalikan')->count();
+
+        $stats = [
+            'active_loans' => $activeCount,
+            'due_soon'     => $dueSoonCount,
+            'total_fines'  => 'Rp ' . number_format($totalFinesSum, 0, ',', '.'),
+            'books_read'   => $booksReadCount,
+        ];
+
+        return view('user.dashboard', compact('loans', 'stats'));
     }
 }
